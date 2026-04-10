@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { supabase } from '@/lib/supabase';
 import type { Report, ReportPage, ImageItem, PageTable } from '@/types/report';
 
 function uid() {
@@ -16,191 +16,338 @@ function emptyPage(): ReportPage {
 
 interface ReportStore {
   reports: Report[];
-  createReport: (name: string, companyName: string) => string;
-  deleteReport: (id: string) => void;
-  updateReportName: (id: string, name: string) => void;
-  updateCompanyName: (id: string, name: string) => void;
+  loading: boolean;
+  fetchReports: (userId: string) => Promise<void>;
+  createReport: (name: string, companyName: string, userId: string) => Promise<string | null>;
+  deleteReport: (id: string) => Promise<void>;
+  updateReportName: (id: string, name: string) => Promise<void>;
+  updateCompanyName: (id: string, name: string) => Promise<void>;
 
   // Page operations
-  addPage: (reportId: string) => void;
-  removePage: (reportId: string, pageId: string) => void;
-  updatePageTitle: (reportId: string, pageId: string, title: string) => void;
+  addPage: (reportId: string) => Promise<void>;
+  removePage: (reportId: string, pageId: string) => Promise<void>;
+  updatePageTitle: (reportId: string, pageId: string, title: string) => Promise<void>;
 
   // Image operations
-  addImageToPage: (reportId: string, pageId: string, image: ImageItem) => void;
-  removeImageFromPage: (reportId: string, pageId: string, imageId: string) => void;
-  updateImageCaption: (reportId: string, pageId: string, imageId: string, caption: string) => void;
+  addImageToPage: (reportId: string, pageId: string, image: ImageItem) => Promise<void>;
+  removeImageFromPage: (reportId: string, pageId: string, imageId: string) => Promise<void>;
+  updateImageCaption: (reportId: string, pageId: string, imageId: string, caption: string) => Promise<void>;
 
   // Table operations
-  addTableToPage: (reportId: string, pageId: string) => void;
-  removeTableFromPage: (reportId: string, pageId: string) => void;
-  addTableRow: (reportId: string, pageId: string) => void;
-  removeTableRow: (reportId: string, pageId: string, rowIndex: number) => void;
-  addTableColumn: (reportId: string, pageId: string) => void;
-  removeTableColumn: (reportId: string, pageId: string, colIndex: number) => void;
-  updateTableCell: (reportId: string, pageId: string, rowIndex: number, colIndex: number, value: string) => void;
-  updateTableColumn: (reportId: string, pageId: string, colIndex: number, value: string) => void;
+  addTableToPage: (reportId: string, pageId: string) => Promise<void>;
+  removeTableFromPage: (reportId: string, pageId: string) => Promise<void>;
+  addTableRow: (reportId: string, pageId: string) => Promise<void>;
+  removeTableRow: (reportId: string, pageId: string, rowIndex: number) => Promise<void>;
+  addTableColumn: (reportId: string, pageId: string) => Promise<void>;
+  removeTableColumn: (reportId: string, pageId: string, colIndex: number) => Promise<void>;
+  updateTableCell: (reportId: string, pageId: string, rowIndex: number, colIndex: number, value: string) => Promise<void>;
+  updateTableColumn: (reportId: string, pageId: string, colIndex: number, value: string) => Promise<void>;
 }
 
-function updateReport(reports: Report[], reportId: string, updater: (r: Report) => Report): Report[] {
-  return reports.map(r => r.id === reportId ? updater({ ...r, updatedAt: new Date().toISOString() }) : r);
+async function syncToSupabase(report: Report) {
+  const { error } = await supabase
+    .from('reports')
+    .upsert({
+      id: report.id,
+      user_id: report.userId,
+      name: report.name,
+      company_name: report.companyName,
+      data: { pages: report.pages },
+      updated_at: new Date().toISOString()
+    });
+  if (error) console.error('Sync failed:', error);
 }
 
-function updatePage(pages: ReportPage[], pageId: string, updater: (p: ReportPage) => ReportPage): ReportPage[] {
-  return pages.map(p => p.id === pageId ? updater(p) : p);
-}
+export const useReportStore = create<ReportStore>((set, get) => ({
+  reports: [],
+  loading: false,
 
-export const useReportStore = create<ReportStore>()(
-  persist(
-    (set) => ({
-      reports: [],
+  fetchReports: async (userId) => {
+    set({ loading: true });
+    const { data, error } = await supabase
+      .from('reports')
+      .select('*')
+      .eq('user_id', userId);
+    
+    if (error) {
+      console.error('Fetch failed:', error);
+      set({ loading: false });
+      return;
+    }
 
-      createReport: (name, companyName) => {
-        const id = uid();
-        const report: Report = {
-          id, name, companyName,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          pages: [emptyPage()],
-        };
-        set(s => ({ reports: [...s.reports, report] }));
-        return id;
-      },
+    const reports: Report[] = data.map(r => ({
+      id: r.id,
+      userId: r.user_id,
+      name: r.name,
+      companyName: r.company_name,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      pages: r.data.pages
+    }));
 
-      deleteReport: (id) => set(s => ({ reports: s.reports.filter(r => r.id !== id) })),
+    set({ reports, loading: false });
+  },
 
-      updateReportName: (id, name) => set(s => ({
-        reports: updateReport(s.reports, id, r => ({ ...r, name })),
-      })),
+  createReport: async (name, companyName, userId) => {
+    const report: Report = {
+      id: crypto.randomUUID(),
+      name, companyName, userId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      pages: [emptyPage()],
+    };
+    
+    const { error } = await supabase.from('reports').insert({
+      id: report.id,
+      user_id: userId,
+      name: report.name,
+      company_name: report.companyName,
+      data: { pages: report.pages }
+    });
 
-      updateCompanyName: (id, companyName) => set(s => ({
-        reports: updateReport(s.reports, id, r => ({ ...r, companyName })),
-      })),
+    if (error) {
+      console.error('Create failed:', error);
+      return null;
+    }
 
-      addPage: (reportId) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({ ...r, pages: [...r.pages, emptyPage()] })),
-      })),
+    set(s => ({ reports: [...s.reports, report] }));
+    return report.id;
+  },
 
-      removePage: (reportId, pageId) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: r.pages.filter(p => p.id !== pageId),
-        })),
-      })),
+  deleteReport: async (id) => {
+    const { error } = await supabase.from('reports').delete().eq('id', id);
+    if (error) {
+      console.error('Delete failed:', error);
+      return;
+    }
+    set(s => ({ reports: s.reports.filter(r => r.id !== id) }));
+  },
 
-      updatePageTitle: (reportId, pageId, title) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: updatePage(r.pages, pageId, p => ({ ...p, title })),
-        })),
-      })),
+  updateReportName: async (id, name) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === id ? { ...r, name, updatedAt: new Date().toISOString() } : r)
+    }));
+    const report = get().reports.find(r => r.id === id);
+    if (report) await syncToSupabase(report);
+  },
 
-      addImageToPage: (reportId, pageId, image) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: updatePage(r.pages, pageId, p => ({ ...p, images: [...p.images, image] })),
-        })),
-      })),
+  updateCompanyName: async (id, companyName) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === id ? { ...r, companyName, updatedAt: new Date().toISOString() } : r)
+    }));
+    const report = get().reports.find(r => r.id === id);
+    if (report) await syncToSupabase(report);
+  },
 
-      removeImageFromPage: (reportId, pageId, imageId) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: updatePage(r.pages, pageId, p => ({ ...p, images: p.images.filter(i => i.id !== imageId) })),
-        })),
-      })),
+  addPage: async (reportId) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: [...r.pages, emptyPage()],
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
 
-      updateImageCaption: (reportId, pageId, imageId, caption) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: updatePage(r.pages, pageId, p => ({
-            ...p, images: p.images.map(i => i.id === imageId ? { ...i, caption } : i),
-          })),
-        })),
-      })),
+  removePage: async (reportId, pageId) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.filter(p => p.id !== pageId),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
 
-      addTableToPage: (reportId, pageId) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: updatePage(r.pages, pageId, p => ({ ...p, table: emptyTable() })),
-        })),
-      })),
+  updatePageTitle: async (reportId, pageId, title) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.map(p => p.id === pageId ? { ...p, title } : p),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
 
-      removeTableFromPage: (reportId, pageId) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: updatePage(r.pages, pageId, p => ({ ...p, table: null })),
-        })),
-      })),
+  addImageToPage: async (reportId, pageId, image) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.map(p => p.id === pageId ? { ...p, images: [...p.images, image] } : p),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
 
-      addTableRow: (reportId, pageId) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: updatePage(r.pages, pageId, p => {
-            if (!p.table) return p;
-            return { ...p, table: { ...p.table, rows: [...p.table.rows, new Array(p.table.columns.length).fill('')] } };
-          }),
-        })),
-      })),
+  removeImageFromPage: async (reportId, pageId, imageId) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.map(p => p.id === pageId ? { ...p, images: p.images.filter(i => i.id !== imageId) } : p),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
 
-      removeTableRow: (reportId, pageId, rowIndex) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: updatePage(r.pages, pageId, p => {
-            if (!p.table) return p;
-            return { ...p, table: { ...p.table, rows: p.table.rows.filter((_, i) => i !== rowIndex) } };
-          }),
-        })),
-      })),
+  updateImageCaption: async (reportId, pageId, imageId, caption) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.map(p => p.id === pageId ? { 
+          ...p, 
+          images: p.images.map(i => i.id === imageId ? { ...i, caption } : i) 
+        } : p),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
 
-      addTableColumn: (reportId, pageId) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: updatePage(r.pages, pageId, p => {
-            if (!p.table) return p;
-            return {
-              ...p, table: {
-                ...p.table,
-                columns: [...p.table.columns, `Column ${p.table.columns.length + 1}`],
-                rows: p.table.rows.map(row => [...row, '']),
-              },
-            };
-          }),
-        })),
-      })),
+  addTableToPage: async (reportId, pageId) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.map(p => p.id === pageId ? { ...p, table: emptyTable() } : p),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
 
-      removeTableColumn: (reportId, pageId, colIndex) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: updatePage(r.pages, pageId, p => {
-            if (!p.table || p.table.columns.length <= 1) return p;
-            return {
-              ...p, table: {
-                ...p.table,
-                columns: p.table.columns.filter((_, i) => i !== colIndex),
-                rows: p.table.rows.map(row => row.filter((_, i) => i !== colIndex)),
-              },
-            };
-          }),
-        })),
-      })),
+  removeTableFromPage: async (reportId, pageId) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.map(p => p.id === pageId ? { ...p, table: null } : p),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
 
-      updateTableCell: (reportId, pageId, rowIndex, colIndex, value) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: updatePage(r.pages, pageId, p => {
-            if (!p.table) return p;
-            return {
-              ...p, table: {
-                ...p.table,
-                rows: p.table.rows.map((row, ri) => ri === rowIndex ? row.map((cell, ci) => ci === colIndex ? value : cell) : row),
-              },
-            };
-          }),
-        })),
-      })),
+  addTableRow: async (reportId, pageId) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.map(p => {
+          if (p.id !== pageId || !p.table) return p;
+          return { ...p, table: { ...p.table, rows: [...p.table.rows, new Array(p.table.columns.length).fill('')] } };
+        }),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
 
-      updateTableColumn: (reportId, pageId, colIndex, value) => set(s => ({
-        reports: updateReport(s.reports, reportId, r => ({
-          ...r, pages: updatePage(r.pages, pageId, p => {
-            if (!p.table) return p;
-            return {
-              ...p, table: {
-                ...p.table,
-                columns: p.table.columns.map((col, i) => i === colIndex ? value : col),
-              },
-            };
-          }),
-        })),
-      })),
-    }),
-    { name: 'report-store' }
-  )
-);
+  removeTableRow: async (reportId, pageId, rowIndex) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.map(p => {
+          if (p.id !== pageId || !p.table) return p;
+          return { ...p, table: { ...p.table, rows: p.table.rows.filter((_, i) => i !== rowIndex) } };
+        }),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
+
+  addTableColumn: async (reportId, pageId) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.map(p => {
+          if (p.id !== pageId || !p.table) return p;
+          return {
+            ...p, table: {
+              ...p.table,
+              columns: [...p.table.columns, `Column ${p.table.columns.length + 1}`],
+              rows: p.table.rows.map(row => [...row, '']),
+            },
+          };
+        }),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
+
+  removeTableColumn: async (reportId, pageId, colIndex) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.map(p => {
+          if (p.id !== pageId || !p.table || p.table.columns.length <= 1) return p;
+          return {
+            ...p, table: {
+              ...p.table,
+              columns: p.table.columns.filter((_, i) => i !== colIndex),
+              rows: p.table.rows.map(row => row.filter((_, i) => i !== colIndex)),
+            },
+          };
+        }),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
+
+  updateTableCell: async (reportId, pageId, rowIndex, colIndex, value) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.map(p => {
+          if (p.id !== pageId || !p.table) return p;
+          return {
+            ...p, table: {
+              ...p.table,
+              rows: p.table.rows.map((row, ri) => ri === rowIndex ? row.map((cell, ci) => ci === colIndex ? value : cell) : row),
+            },
+          };
+        }),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
+
+  updateTableColumn: async (reportId, pageId, colIndex, value) => {
+    set(s => ({
+      reports: s.reports.map(r => r.id === reportId ? { 
+        ...r, 
+        pages: r.pages.map(p => {
+          if (p.id !== pageId || !p.table) return p;
+          return {
+            ...p, table: {
+              ...p.table,
+              columns: p.table.columns.map((col, i) => i === colIndex ? value : col),
+            },
+          };
+        }),
+        updatedAt: new Date().toISOString()
+      } : r)
+    }));
+    const report = get().reports.find(r => r.id === reportId);
+    if (report) await syncToSupabase(report);
+  },
+}));
+

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, FileText, Trash2, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -6,41 +6,73 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useReportStore } from '@/stores/reportStore';
+import { useAuthStore } from '@/stores/authStore';
+import { LogOut } from 'lucide-react';
 
 export default function Index() {
   const navigate = useNavigate();
-  const { reports, createReport, deleteReport } = useReportStore();
+  const { reports, fetchReports, createReport, deleteReport, loading } = useReportStore();
+  const { user, logout } = useAuthStore();
   const [showDialog, setShowDialog] = useState(false);
   const [reportName, setReportName] = useState('');
   const [companyName, setCompanyName] = useState('');
 
-  const handleCreate = () => {
+  useEffect(() => {
+    if (user) {
+      fetchReports(user.id);
+    }
+  }, [user, fetchReports]);
+
+  const handleCreate = async () => {
+    if (!user) return;
     const name = reportName.trim() || 'Untitled Report';
     const company = companyName.trim() || '';
-    const id = createReport(name, company);
-    setShowDialog(false);
-    setReportName('');
-    setCompanyName('');
-    navigate(`/report/${id}`);
+    const id = await createReport(name, company, user.id);
+    if (id) {
+      setShowDialog(false);
+      setReportName('');
+      setCompanyName('');
+      navigate(`/report/${id}`);
+    }
   };
 
-  const sorted = [...reports].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const userReports = reports.filter(r => r.userId === user?.id);
+  const sorted = [...userReports].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-3xl px-6 py-16">
-        <div className="mb-12 text-center">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-1.5 text-sm font-medium text-primary">
-            <FileText className="h-4 w-4" />
-            Report Generator
+        <div className="relative mb-12 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary shadow-sm">
+              <FileText className="h-6 w-6" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-foreground">
+                {user?.email}
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                Your personal Report Dashboard
+              </p>
+            </div>
           </div>
-          <h1 className="mb-3 text-4xl font-bold tracking-tight text-foreground">
+          <Button variant="outline" size="sm" onClick={logout} className="gap-2 border-border/50 bg-background/50 hover:bg-destructive/5 hover:text-destructive">
+            <LogOut className="h-4 w-4" /> Logout
+          </Button>
+        </div>
+
+        <div className="mb-12 rounded-2xl border border-primary/10 bg-gradient-to-br from-primary/5 via-transparent to-transparent p-8 text-center">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-1.5 text-sm font-medium text-primary">
+             New Features
+          </div>
+          <h2 className="mb-3 text-3xl font-bold tracking-tight text-foreground">
             Image Catalogue Reports
-          </h1>
-          <p className="text-lg text-muted-foreground">
-            Create structured reports with images and tables — export as professional landscape PDFs.
+          </h2>
+          <p className="mx-auto max-w-md text-muted-foreground">
+            Create structured reports with images and tables — export as professional landscape PDFs for your business needs.
           </p>
         </div>
+
 
         <div className="mb-8 flex justify-center">
           <Button size="lg" onClick={() => setShowDialog(true)} className="gap-2 px-8">
@@ -48,7 +80,11 @@ export default function Index() {
           </Button>
         </div>
 
-        {sorted.length > 0 && (
+        {loading ? (
+          <div className="flex justify-center py-20">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          </div>
+        ) : sorted.length > 0 ? (
           <div>
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Recent Reports</h2>
             <div className="space-y-2">
@@ -81,7 +117,8 @@ export default function Index() {
               ))}
             </div>
           </div>
-        )}
+        ) : null}
+
       </div>
 
       <Dialog open={showDialog} onOpenChange={setShowDialog}>

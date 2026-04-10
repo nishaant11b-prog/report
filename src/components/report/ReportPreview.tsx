@@ -2,9 +2,10 @@ import type { Report, Page } from '@/types/report';
 
 interface ReportPreviewProps {
   report: Report;
+  id?: string;
 }
 
-export function ReportPreview({ report }: ReportPreviewProps) {
+export function ReportPreview({ report, id = "report-preview" }: ReportPreviewProps) {
   const dateStr = new Date(report.createdAt).toLocaleDateString('en-GB', {
     day: '2-digit', month: '2-digit', year: 'numeric'
   });
@@ -98,7 +99,7 @@ export function ReportPreview({ report }: ReportPreviewProps) {
 
   return (
     <div 
-      id="report-preview" 
+      id={id} 
       style={{ 
         backgroundColor: '#fff', 
         margin: 0, 

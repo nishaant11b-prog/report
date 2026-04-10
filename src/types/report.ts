@@ -19,9 +19,11 @@ export interface ReportPage {
 
 export interface Report {
   id: string;
+  userId: string;
   name: string;
   companyName: string;
   createdAt: string;
   updatedAt: string;
   pages: ReportPage[];
 }
+

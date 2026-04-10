@@ -1,10 +1,12 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download, Plus, ImageIcon, TableIcon, Trash2, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useReportStore } from '@/stores/reportStore';
+import { useAuthStore } from '@/stores/authStore';
 import { ReportPreview } from '@/components/report/ReportPreview';
+import { LogOut } from 'lucide-react';
 import { useCallback } from 'react';
 import type { ImageItem } from '@/types/report';
 
@@ -12,25 +14,68 @@ export default function ReportBuilder() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const store = useReportStore();
-  const report = store.reports.find(r => r.id === id);
+  const { user, logout } = useAuthStore();
+  const { reports, fetchReports, loading } = useReportStore();
+  const report = reports.find(r => r.id === id);
   const [activePageIndex, setActivePageIndex] = useState(0);
+  const [isExporting, setIsExporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const exportPdf = useCallback(async () => {
-    if (!report) return;
-    const html2pdf = (await import('html2pdf.js')).default;
-    const el = document.getElementById('report-preview');
-    if (!el) return;
+  useEffect(() => {
+    if (user && reports.length === 0) {
+      fetchReports(user.id);
+    }
+  }, [user, reports.length, fetchReports]);
 
-    html2pdf().set({
-      margin: 0,
-      filename: `${report.name}.pdf`,
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 3, useCORS: true, letterRendering: true, scrollY: 0 },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
-      pagebreak: { mode: ['css', 'legacy'] }
-    }).from(el).save();
-  }, [report]);
+  const exportPdf = useCallback(async () => {
+    if (!report || isExporting) return;
+    
+    try {
+      setIsExporting(true);
+      const html2pdf = (await import('html2pdf.js')).default;
+      
+      // Select the hidden export element instead of the sidebar preview
+      const el = document.getElementById('report-export-container');
+      if (!el) {
+        console.error('Export element not found');
+        return;
+      }
+
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      const scale = isMobile ? 1.5 : 2; // Scale 3 was causing memory issues on mobile
+
+      const opt = {
+        margin: 0,
+        filename: `${report.name}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { 
+          scale: scale, 
+          useCORS: true, 
+          letterRendering: true, 
+          scrollY: 0,
+          logging: false,
+          imageTimeout: 0
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
+        pagebreak: { mode: ['css', 'legacy'] }
+      };
+
+      await html2pdf().set(opt).from(el).save();
+    } catch (error) {
+      console.error('PDF Export failed:', error);
+      alert('Failed to generate PDF. Please try again with fewer images or on a desktop.');
+    } finally {
+      setIsExporting(false);
+    }
+  }, [report, isExporting]);
+
+  if (loading && !report) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
 
   if (!report) {
     return (
@@ -42,6 +87,7 @@ export default function ReportBuilder() {
       </div>
     );
   }
+
 
   const activePage = report.pages[activePageIndex] || report.pages[0];
   if (!activePage) return null;
@@ -86,9 +132,19 @@ export default function ReportBuilder() {
           className="max-w-xs border-0 bg-transparent text-base font-semibold focus-visible:ring-0"
         />
         <div className="flex-1" />
-        <Button size="sm" onClick={exportPdf} className="gap-2">
-          <Download className="h-4 w-4" /> Export PDF
-        </Button>
+        <div className="flex items-center gap-2">
+          <span className="hidden text-xs font-medium text-muted-foreground sm:block">
+            {user?.email}
+          </span>
+          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={logout}>
+            <LogOut className="h-4 w-4" />
+          </Button>
+          <div className="mx-2 h-4 w-[1px] bg-border" />
+          <Button size="sm" onClick={exportPdf} disabled={isExporting} className="gap-2">
+            <Download className="h-4 w-4" /> 
+            {isExporting ? 'Generating...' : 'Export PDF'}
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -267,6 +323,11 @@ export default function ReportBuilder() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Hidden container for PDF export - always rendered and accessible for html2pdf */}
+      <div style={{ position: 'fixed', left: '-9999px', top: 0, zIndex: -100, pointerEvents: 'none' }}>
+        <ReportPreview report={report} id="report-export-container" />
       </div>
     </div>
   );
